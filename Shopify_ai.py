@@ -53,9 +53,11 @@ prompt: {user_query}""",
                         if data_json:
                             data_obj = json.loads(data_json)
                             code = data_obj.get("response")
-                            code = re.sub(r'SHOP\s*=\s*os.getenv\([\'"].+?[\'"]\)', 'SHOP = "qeapptest"', code)
+                            # code = re.sub(r'SHOP\s*=\s*os.getenv\([\'"].+?[\'"]\)', 'SHOP = "qeapptest"', code)
+                            code = re.sub(r'SHOP\s*=\s*os.getenv\([\'"].+?[\'"]\)', 'SHOP = "qeapptest.myshopify.com"', code)
                             code = re.sub(r'ACCESS_TOKEN\s*=\s*os.getenv\([\'"].+?[\'"]\)', 'ACCESS_TOKEN = "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"', code)
                             clean_code = code
+                            print(clean_code)
                             break
                     buffer = {}
                     continue
@@ -73,7 +75,9 @@ prompt: {user_query}""",
         sys_stdout_backup = sys.stdout
         sys.stdout = output_buffer
 
-        os.environ["SHOP"] = "qeapptest"
+        # os.environ["SHOP"] = "qeapptest"
+        os.environ["SHOP"] = "qeapptest.myshopify.com"
+
         os.environ["ACCESS_TOKEN"] = "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"
 
         exec_globals = {
