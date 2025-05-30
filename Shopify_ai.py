@@ -8,7 +8,6 @@ import re
 from datetime import datetime, timedelta
 import ast
 import time
-import certifi
 
 # === Session State Init ===
 if "chat_history" not in st.session_state:
@@ -17,6 +16,10 @@ if "input_text" not in st.session_state:
     st.session_state.input_text = ""
 if "api_call" not in st.session_state:
     st.session_state.api_call = 1
+if "shop" not in st.session_state:
+    st.session_state.shop = ""
+if "token" not in st.session_state:
+    st.session_state.token = ""
 
 # === Function: Call AI Agent and Execute Shopify Code ===
 def handle_send():
@@ -24,29 +27,36 @@ def handle_send():
     if not user_query:
         return
 
-    st.session_state.chat_history.append({"sender": "You", "content": user_query})
-    time.sleep(30)
-    # Call IndiaAGI SSE API
-    url = "https://api.indiaagi.ai/test/sse"
-    params = {
-        "question": f"""SHOP=qeapptest
-ACCESS_TOKEN=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
+    if not st.session_state.shop or not st.session_state.token:
+        st.session_state.chat_history.append({"sender": "AI Bot", "content": "⚠️ Please enter both SHOP and ACCESS_TOKEN above."})
+        return
+    
+     # 🔐 Ensure valid domain
+    if not st.session_state.shop.endswith(".myshopify.com"):
+        st.session_state.shop += ".myshopify.com"
 
+    st.session_state.chat_history.append({"sender": "You", "content": user_query})
+    time.sleep(10)
+
+    # Construct question with dynamic shop/token
+    question = f"""SHOP={st.session_state.shop}
+ACCESS_TOKEN={st.session_state.token}
 You are a Python coding agent that generates code using the requests library to call the Shopify Admin REST API (2023-10).
 Use requests with the shop and token from environment variables.
 Only return clean Python code (no markdown, no explanations,no loop,no conditional statement).
 The last line must be: print(final_output)
 The variable final_output should hold the data to return
+prompt: {user_query}"""
 
-prompt: {user_query}""",
+    url = "https://api.indiaagi.ai/test/sse"
+    params = {
+        "question": question,
         "rounds": 1,
         "model": "OpenAI"
     }
 
     clean_code = ""
     try:
-
-        # with requests.get(url, params=params, stream=True, verify=certifi.where(), timeout=(5, 10)) as response:
         with requests.get(url, params=params, stream=True, verify=False) as response:
             response.raise_for_status()
             buffer = {}
@@ -57,10 +67,10 @@ prompt: {user_query}""",
                         if data_json:
                             data_obj = json.loads(data_json)
                             code = data_obj.get("response")
-                            code = re.sub(r'SHOP\s*=\s*os.getenv\([\'"].+?[\'"]\)', 'SHOP = "qeapptest"', code)
-                            code = re.sub(r'ACCESS_TOKEN\s*=\s*os.getenv\([\'"].+?[\'"]\)', 'ACCESS_TOKEN = "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"', code)
+                            # Replace environment variable usage with actual values
+                            code = re.sub(r'SHOP\s*=\s*os.getenv\([\'"].+?[\'"]\)', f'SHOP = "{st.session_state.shop}"', code)
+                            code = re.sub(r'ACCESS_TOKEN\s*=\s*os.getenv\([\'"].+?[\'"]\)', f'ACCESS_TOKEN = "{st.session_state.token}"', code)
                             clean_code = code
-                            # print(clean_code)
                             break
                     buffer = {}
                     continue
@@ -78,10 +88,8 @@ prompt: {user_query}""",
         sys_stdout_backup = sys.stdout
         sys.stdout = output_buffer
 
-        # os.environ["SHOP"] = "qeapptest"
-        os.environ["SHOP"] = "qeapptest.myshopify.com"
-
-        os.environ["ACCESS_TOKEN"] = "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"
+        os.environ["SHOP"] = st.session_state.shop
+        os.environ["ACCESS_TOKEN"] = st.session_state.token
 
         exec_globals = {
             "__builtins__": __builtins__,
@@ -94,18 +102,19 @@ prompt: {user_query}""",
 
         sys.stdout = sys_stdout_backup
         final_output = output_buffer.getvalue().strip()
-        # st.session_state.chat_history.append({"sender": "AI Bot", "content": final_output})
+
         if final_output:
             try:
                 parsed = json.loads(final_output)
             except json.JSONDecodeError:
                 try:
                     parsed = ast.literal_eval(final_output)
-                except Exception as e:
-                    parsed = final_output  # fallback to raw string
+                except Exception:
+                    parsed = final_output
         else:
             st.session_state.chat_history.append({"sender": "AI Bot", "content": "❌ Empty output from executed code."})
             return
+
         # Beautify output
         if isinstance(parsed, list):
             beautified = "\n".join(
@@ -118,19 +127,15 @@ prompt: {user_query}""",
         else:
             beautified = str(parsed)
 
-        # Add to chat history
         st.session_state.chat_history.append({"sender": "AI Bot", "content": beautified})
     except Exception as e:
         sys.stdout = sys_stdout_backup
-        error_msg = str(e)
-        # Detect host resolution error
-        if "Failed to resolve" in error_msg and st.session_state.api_call < 3:
+        if "Failed to resolve" in str(e) and st.session_state.api_call < 3:
             st.session_state.api_call += 1
-            # st.session_state.chat_history.append({"sender": "AI Bot", "content": "🔁 Retrying due to connection error..."})
-            handle_send()  # Retry once
+            handle_send()
             return
         else:
-            st.session_state.chat_history.append({"sender": "AI Bot", "content": f"❌ Code execution error: {error_msg}"})
+            st.session_state.chat_history.append({"sender": "AI Bot", "content": f"❌ Code execution error: {str(e)}"})
 
     st.session_state.input_text = ""
 
@@ -142,6 +147,10 @@ def clear_chat():
 
 # === UI Layout ===
 st.title("🛍️ AI + Shopify Assistant")
+
+# Manual SHOP + TOKEN inputs
+st.text_input("🛒 Shopify Store Name (e.g., qeapptest.myshopify.com):", key="shop")
+st.text_input("🔐 Access Token:", type="password", key="token")
 
 # Chat History Display
 for message in st.session_state.chat_history:
