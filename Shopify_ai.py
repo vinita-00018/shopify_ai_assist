@@ -7,6 +7,8 @@ import sys
 import re
 from datetime import datetime, timedelta
 import ast
+import time
+import certifi
 
 # === Session State Init ===
 if "chat_history" not in st.session_state:
@@ -23,7 +25,7 @@ def handle_send():
         return
 
     st.session_state.chat_history.append({"sender": "You", "content": user_query})
-
+    time.sleep(30)
     # Call IndiaAGI SSE API
     url = "https://api.indiaagi.ai/test/sse"
     params = {
@@ -43,7 +45,9 @@ prompt: {user_query}""",
 
     clean_code = ""
     try:
-        with requests.get(url, params=params, stream=True) as response:
+
+        # with requests.get(url, params=params, stream=True, verify=certifi.where(), timeout=(5, 10)) as response:
+        with requests.get(url, params=params, stream=True, verify=False) as response:
             response.raise_for_status()
             buffer = {}
             for line in response.iter_lines(decode_unicode=True):
@@ -53,11 +57,10 @@ prompt: {user_query}""",
                         if data_json:
                             data_obj = json.loads(data_json)
                             code = data_obj.get("response")
-                            # code = re.sub(r'SHOP\s*=\s*os.getenv\([\'"].+?[\'"]\)', 'SHOP = "qeapptest"', code)
-                            code = re.sub(r'SHOP\s*=\s*os.getenv\([\'"].+?[\'"]\)', 'SHOP = "qeapptest.myshopify.com"', code)
+                            code = re.sub(r'SHOP\s*=\s*os.getenv\([\'"].+?[\'"]\)', 'SHOP = "qeapptest"', code)
                             code = re.sub(r'ACCESS_TOKEN\s*=\s*os.getenv\([\'"].+?[\'"]\)', 'ACCESS_TOKEN = "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"', code)
                             clean_code = code
-                            print(clean_code)
+                            # print(clean_code)
                             break
                     buffer = {}
                     continue
@@ -92,11 +95,17 @@ prompt: {user_query}""",
         sys.stdout = sys_stdout_backup
         final_output = output_buffer.getvalue().strip()
         # st.session_state.chat_history.append({"sender": "AI Bot", "content": final_output})
-        try:
-            parsed = ast.literal_eval(final_output)
-        except:
-            parsed = final_output  # fallback if not a list/dict
-
+        if final_output:
+            try:
+                parsed = json.loads(final_output)
+            except json.JSONDecodeError:
+                try:
+                    parsed = ast.literal_eval(final_output)
+                except Exception as e:
+                    parsed = final_output  # fallback to raw string
+        else:
+            st.session_state.chat_history.append({"sender": "AI Bot", "content": "❌ Empty output from executed code."})
+            return
         # Beautify output
         if isinstance(parsed, list):
             beautified = "\n".join(
@@ -113,7 +122,15 @@ prompt: {user_query}""",
         st.session_state.chat_history.append({"sender": "AI Bot", "content": beautified})
     except Exception as e:
         sys.stdout = sys_stdout_backup
-        st.session_state.chat_history.append({"sender": "AI Bot", "content": f"❌ Code execution error: {str(e)}"})
+        error_msg = str(e)
+        # Detect host resolution error
+        if "Failed to resolve" in error_msg and st.session_state.api_call < 3:
+            st.session_state.api_call += 1
+            # st.session_state.chat_history.append({"sender": "AI Bot", "content": "🔁 Retrying due to connection error..."})
+            handle_send()  # Retry once
+            return
+        else:
+            st.session_state.chat_history.append({"sender": "AI Bot", "content": f"❌ Code execution error: {error_msg}"})
 
     st.session_state.input_text = ""
 
